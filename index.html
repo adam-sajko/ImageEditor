@@ -1,0 +1,1023 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Image Editor</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0f0f0f;
+  --surface: #1a1a1a;
+  --surface2: #242424;
+  --border: #333;
+  --text: #e4e4e4;
+  --text-dim: #9a9a9a;
+  --accent: #4f8cff;
+  --accent-hover: #6ea1ff;
+  --danger: #ff4f4f;
+  --radius: 8px;
+}
+
+html, body { height: 100%; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  user-select: none;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.toolbar .sep {
+  width: 1px;
+  height: 28px;
+  background: var(--border);
+  margin: 0 4px;
+}
+
+button, .file-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background .15s, border-color .15s, opacity .15s;
+  white-space: nowrap;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+@media (hover: hover) {
+  button:hover:not(:disabled):not(.active):not(.primary):not(.danger), .file-label:hover {
+    background: #2e2e2e;
+    border-color: #555;
+  }
+  button.primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+  }
+  button.danger:hover:not(:disabled) { background: var(--danger); color: #fff; }
+  button.ghost:hover:not(:disabled) { color: var(--text); }
+  .zoom-controls button:hover:not(:disabled) { background: var(--surface2); }
+  .drop-zone:hover { background: rgba(255, 255, 255, .02); }
+}
+
+button:focus-visible, .file-label:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+button.danger { border-color: var(--danger); color: var(--danger); }
+
+button:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+}
+
+.file-input { display: none; }
+
+.file-name-badge {
+  font-size: 12px;
+  color: var(--text-dim);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 4px;
+}
+
+button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-dim);
+}
+
+.workspace {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  touch-action: none;
+  background:
+    repeating-conic-gradient(#1c1c1c 0% 25%, #222 0% 50%) 0 0 / 20px 20px;
+}
+
+.workspace.drag-over::after {
+  content: 'Drop image to open';
+  position: absolute;
+  inset: 12px;
+  border: 2px dashed var(--accent);
+  border-radius: 12px;
+  background: rgba(79, 140, 255, .12);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 90;
+  pointer-events: none;
+}
+
+.canvas-wrap {
+  position: absolute;
+  cursor: grab;
+  transform-origin: 0 0;
+}
+
+.canvas-wrap.dragging { cursor: grabbing; }
+
+.canvas-wrap canvas {
+  display: block;
+  image-rendering: auto;
+}
+
+.canvas-wrap canvas.pixelated {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.resize-handle {
+  --hs: 12px;
+  --hit: 32px;
+  position: absolute;
+  background: var(--accent);
+  border: 2px solid #fff;
+  border-radius: 3px;
+  z-index: 10;
+}
+
+.resize-handle::after, .crop-handle::after {
+  content: '';
+  position: absolute;
+}
+
+.resize-handle, .crop-handle {
+  --off: calc(var(--hs) / -2);
+  width: var(--hs);
+  height: var(--hs);
+}
+
+.resize-handle::after, .crop-handle::after {
+  inset: calc((var(--hit) - var(--hs)) / -2);
+}
+
+.resize-handle.tl, .crop-handle.tl { top: var(--off); left: var(--off); cursor: nwse-resize; }
+.resize-handle.tr, .crop-handle.tr { top: var(--off); right: var(--off); cursor: nesw-resize; }
+.resize-handle.bl, .crop-handle.bl { bottom: var(--off); left: var(--off); cursor: nesw-resize; }
+.resize-handle.br, .crop-handle.br { bottom: var(--off); right: var(--off); cursor: nwse-resize; }
+.resize-handle.tm, .crop-handle.tm { top: var(--off); left: 50%; transform: translateX(-50%); cursor: ns-resize; }
+.resize-handle.bm, .crop-handle.bm { bottom: var(--off); left: 50%; transform: translateX(-50%); cursor: ns-resize; }
+.resize-handle.ml, .crop-handle.ml { top: 50%; left: var(--off); transform: translateY(-50%); cursor: ew-resize; }
+.resize-handle.mr, .crop-handle.mr { top: 50%; right: var(--off); transform: translateY(-50%); cursor: ew-resize; }
+
+.crop-overlay {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: auto;
+  cursor: crosshair;
+  z-index: 20;
+  display: none;
+}
+
+.crop-overlay.active { display: block; }
+
+.crop-selection {
+  position: absolute;
+  border: 2px dashed #fff;
+  box-shadow: 0 0 0 9999px rgba(0,0,0,.55);
+  pointer-events: auto;
+  cursor: move;
+}
+
+.crop-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, rgba(255,255,255,.28) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,255,255,.28) 1px, transparent 1px);
+  background-size: 33.333% 33.333%;
+}
+
+.crop-badge {
+  position: absolute;
+  top: -26px;
+  left: 0;
+  background: rgba(15, 15, 15, .85);
+  color: #fff;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.crop-handle {
+  --hs: 10px;
+  --hit: 30px;
+  position: absolute;
+  background: #fff;
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  pointer-events: auto;
+}
+
+.drop-zone {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  z-index: 5;
+  cursor: pointer;
+  transition: opacity .2s, background .2s;
+}
+
+.drop-zone.hidden { display: none; }
+
+.drop-zone svg { opacity: .35; }
+
+.drop-zone p {
+  font-size: 15px;
+  color: var(--text-dim);
+}
+
+.drop-zone .drop-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+  opacity: .8;
+}
+
+.crop-actions {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: none;
+  align-items: center;
+  gap: 8px;
+  z-index: 30;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  flex-wrap: wrap;
+}
+
+.crop-actions.active { display: flex; }
+
+.crop-presets {
+  display: flex;
+  gap: 4px;
+  margin-right: 4px;
+}
+
+.crop-presets button {
+  padding: 5px 9px;
+  font-size: 12px;
+}
+
+.zoom-controls {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 6px;
+  z-index: 25;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .2s;
+}
+
+.zoom-controls.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.zoom-controls button {
+  padding: 5px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+}
+
+.zoom-controls #zoomLevel {
+  font-size: 12px;
+  color: var(--text-dim);
+  min-width: 42px;
+  text-align: center;
+}
+
+.zoom-controls #btnZoomReset {
+  font-size: 12px;
+  color: var(--text-dim);
+  min-width: 48px;
+  justify-content: center;
+  padding: 4px 6px;
+}
+
+.zoom-controls #infoSize {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  padding: 0 4px;
+}
+
+.zoom-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  min-width: 1px;
+  flex-shrink: 0;
+}
+
+.side-panel {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 256px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  z-index: 25;
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0,0,0,.4);
+}
+
+.side-panel.visible { display: flex; }
+
+.side-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.side-panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.side-panel-header button {
+  padding: 2px 6px;
+  font-size: 11px;
+  border: none;
+  background: transparent;
+}
+
+.side-panel-body {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 440px;
+  overflow-y: auto;
+}
+
+.panel-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.panel-actions button {
+  flex: 1;
+  justify-content: center;
+}
+
+.slider-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.slider-row label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.slider-row input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+  height: 4px;
+  cursor: pointer;
+}
+
+.filter-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.filter-grid button {
+  padding: 6px 8px;
+  font-size: 12px;
+  justify-content: center;
+  border: 1px solid var(--border);
+}
+
+.filter-grid button.active-filter {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.resize-fields {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+}
+
+.resize-field {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.resize-field label {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+
+.resize-field input[type="number"], .text-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  -moz-appearance: textfield;
+}
+
+.resize-field input[type="number"]:focus, .text-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.resize-field input[type="number"]::-webkit-inner-spin-button { opacity: 1; }
+
+.resize-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  flex-shrink: 0;
+  padding-top: 18px;
+}
+
+.resize-link button {
+  width: 28px;
+  height: 28px;
+  padding: 0 !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px !important;
+  border: 1px solid var(--border) !important;
+  background: transparent !important;
+  color: var(--text-dim);
+  font-size: 13px;
+  transition: all .15s;
+}
+
+.resize-link button.locked {
+  color: var(--accent);
+  border-color: var(--accent) !important;
+  background: rgba(79,140,255,.1) !important;
+}
+
+.unit-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.unit-toggle button {
+  flex: 1;
+  padding: 5px 0;
+  font-size: 12px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  text-align: center;
+  justify-content: center;
+}
+
+.unit-toggle button.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.export-panel {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  z-index: 200;
+  display: none;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 320px;
+  max-width: calc(100vw - 24px);
+}
+
+.export-panel.visible { display: flex; }
+
+.export-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.5);
+  z-index: 199;
+  display: none;
+}
+
+.export-backdrop.visible { display: block; }
+
+.export-panel h3 {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.export-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.export-field label {
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.export-panel .format-btns {
+  display: flex;
+  gap: 8px;
+}
+
+.export-panel .format-btns button {
+  flex: 1;
+  justify-content: center;
+  padding: 8px;
+}
+
+.export-panel .quality-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.export-panel .quality-row label {
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex;
+  justify-content: space-between;
+}
+
+.export-panel .quality-row input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.export-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.export-bg-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.export-bg-row input[type="color"] {
+  width: 32px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.export-panel .export-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.export-panel .export-actions button { flex: 1; justify-content: center; }
+
+.toast {
+  position: fixed;
+  bottom: 72px;
+  left: 50%;
+  translate: -50% 0;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 18px;
+  font-size: 13px;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: all .3s;
+  z-index: 250;
+  pointer-events: none;
+  user-select: text;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.compare-btn {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+@media (pointer: coarse) {
+  .resize-handle { --hs: 18px; --hit: 44px; }
+  .crop-handle { --hs: 16px; --hit: 44px; }
+  .zoom-controls button { padding: 9px; }
+}
+
+@media (max-width: 640px) {
+  .toolbar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 6px;
+    padding: 8px 10px;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .toolbar::-webkit-scrollbar { display: none; }
+  .toolbar > * { flex-shrink: 0; }
+  .toolbar .label { display: none; }
+  .toolbar button, .toolbar .file-label { padding: 10px; }
+  .toolbar .sep { height: 24px; margin: 0 2px; }
+  .file-name-badge, .file-name-sep { display: none; }
+
+  .side-panel {
+    top: auto;
+    bottom: 64px;
+    left: 8px;
+    right: 8px;
+    width: auto;
+  }
+  .side-panel-body { max-height: 45vh; }
+
+  .crop-actions {
+    bottom: 64px;
+    left: 8px;
+    right: 8px;
+    transform: none;
+    justify-content: center;
+  }
+  .crop-presets { width: 100%; justify-content: center; margin-right: 0; }
+  .crop-presets button { flex: 1; justify-content: center; }
+  .crop-actions > button { flex: 1; justify-content: center; }
+
+  .zoom-controls { bottom: 8px; right: 8px; left: 8px; justify-content: space-between; }
+
+  .drop-zone p { padding: 0 24px; text-align: center; }
+}
+</style>
+</head>
+<body>
+
+<div class="toolbar" role="toolbar" aria-label="Image editor tools">
+  <label class="file-label" id="openLabel" tabindex="0" role="button" aria-label="Open image">
+    <svg aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 13V3h6l4 4v6H3z"/><path d="M9 3v4h4"/></svg>
+    <span class="label">Open</span>
+    <input type="file" class="file-input" id="fileInput" accept="image/*">
+  </label>
+
+  <div class="sep"></div>
+
+  <button id="btnCrop" disabled title="Crop (C)" aria-label="Crop" aria-pressed="false">
+    <svg aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 1v11h11"/><path d="M1 4h11v11"/></svg>
+    <span class="label">Crop</span>
+  </button>
+
+  <button id="btnResize" disabled title="Resize (R)" aria-label="Resize" aria-pressed="false">
+    <svg aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="1" y="1" width="14" height="14" rx="2"/><path d="M9 14V9h5"/><circle cx="12" cy="12" r="1"/></svg>
+    <span class="label">Resize</span>
+  </button>
+
+  <button id="btnRotateCW" disabled title="Rotate 90° clockwise" aria-label="Rotate 90 degrees clockwise">
+    <svg aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M13 7a5 5 0 10-1.5 5.5"/><path d="M13 3v4h-4"/></svg>
+  </button>
+
+  <button id="btnRotateCCW" disabled title="Rotate 90° counter-clockwise" aria-label="Rotate 90 degrees counter-clockwise">
+    <svg aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7a5 5 0 111.5 5.5"/><path d="M3 3v4h4"/></svg>
+  </button>
+
+  <button id="btnFlipH" disabled title="Flip horizontal" aria-label="Flip horizontal">
+    <svg aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 1v14"/><path d="M3 4l-1 4 1 4"/><path d="M13 4l1 4-1 4"/></svg>
+  </button>
+
+  <button id="btnFlipV" disabled title="Flip vertical" aria-label="Flip vertical">
+    <svg aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M1 8h14"/><path d="M4 3L8 2l4 1"/><path d="M4 13l4 1 4-1"/></svg>
+  </button>
+
+  <div class="sep"></div>
+
+  <button id="btnAdjust" disabled title="Brightness / Contrast / Saturation" aria-label="Adjust" aria-pressed="false">
+    <svg aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="8" r="5"/><path d="M8 3v10"/><path d="M8 3a5 5 0 010 10"/></svg>
+    <span class="label">Adjust</span>
+  </button>
+
+  <button id="btnFilters" disabled title="Filters" aria-label="Filters" aria-pressed="false">
+    <svg aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="1" y="1" width="14" height="14" rx="2"/><path d="M1 5h14"/><path d="M5 1v14"/></svg>
+    <span class="label">Filters</span>
+  </button>
+
+  <div class="sep"></div>
+
+  <button id="btnUndo" disabled title="Undo (Ctrl+Z)" aria-label="Undo">
+    <svg aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7h7a4 4 0 010 8H6"/><path d="M6 4L3 7l3 3"/></svg>
+    <span class="label">Undo</span>
+  </button>
+
+  <button id="btnRedo" disabled title="Redo (Ctrl+Shift+Z)" aria-label="Redo">
+    <svg aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M13 7H6a4 4 0 000 8h4"/><path d="M10 4l3 3-3 3"/></svg>
+    <span class="label">Redo</span>
+  </button>
+
+  <div class="sep"></div>
+
+  <button id="btnRevert" class="ghost" disabled title="Revert to original image" aria-label="Revert to original">
+    <svg aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 8a6 6 0 106-6 6.5 6.5 0 00-4.5 1.9L2 5.5"/><path d="M2 2v3.5h3.5"/><path d="M8 5v3l2 1.5"/></svg>
+    <span class="label">Revert</span>
+  </button>
+
+  <div class="sep"></div>
+
+  <button id="btnExport" class="primary" disabled title="Export image (Ctrl+E)" aria-label="Export">
+    <svg aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 10v3h10v-3"/><path d="M8 2v8"/><path d="M5 7l3 3 3-3"/></svg>
+    <span class="label">Export</span>
+  </button>
+
+  <button id="btnCopy" disabled title="Copy to clipboard" aria-label="Copy to clipboard">
+    <svg aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="5" width="9" height="9" rx="1"/><path d="M5 11H3a1 1 0 01-1-1V3a1 1 0 011-1h7a1 1 0 011 1v2"/></svg>
+    <span class="label">Copy</span>
+  </button>
+</div>
+
+<div class="workspace" id="workspace">
+  <div class="drop-zone" id="dropZone">
+    <svg aria-hidden="true" width="64" height="64" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="8" y="8" width="48" height="48" rx="8"/><path d="M24 40l8-10 8 10"/><circle cx="24" cy="24" r="4"/></svg>
+    <p>Drop an image here, paste with <strong>Ctrl+V</strong>, or tap <strong>Open</strong></p>  </div>
+
+  <div class="canvas-wrap" id="canvasWrap" style="display:none;">
+    <canvas id="mainCanvas"></canvas>
+    <div class="resize-handle tl" data-dir="tl"></div>
+    <div class="resize-handle tr" data-dir="tr"></div>
+    <div class="resize-handle bl" data-dir="bl"></div>
+    <div class="resize-handle br" data-dir="br"></div>
+    <div class="resize-handle tm" data-dir="tm"></div>
+    <div class="resize-handle bm" data-dir="bm"></div>
+    <div class="resize-handle ml" data-dir="ml"></div>
+    <div class="resize-handle mr" data-dir="mr"></div>
+
+    <div class="crop-overlay" id="cropOverlay">
+      <div class="crop-selection" id="cropSelection">
+        <div class="crop-grid"></div>
+        <div class="crop-badge" id="cropBadge"></div>
+        <div class="crop-handle tl" data-dir="tl"></div>
+        <div class="crop-handle tr" data-dir="tr"></div>
+        <div class="crop-handle bl" data-dir="bl"></div>
+        <div class="crop-handle br" data-dir="br"></div>
+        <div class="crop-handle tm" data-dir="tm"></div>
+        <div class="crop-handle bm" data-dir="bm"></div>
+        <div class="crop-handle ml" data-dir="ml"></div>
+        <div class="crop-handle mr" data-dir="mr"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="zoom-controls" id="zoomControls">
+    <span class="file-name-badge" id="fileNameBadge"></span>
+    <span class="zoom-sep file-name-sep"></span>
+    <span id="infoSize"></span>
+    <span class="zoom-sep"></span>
+    <button id="btnFitView" disabled title="Fit to view (F)" aria-label="Fit to view">
+      <svg aria-hidden="true" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="12" height="12" rx="2"/><path d="M3 3l12 12"/></svg>
+    </button>
+    <button id="btnZoomOut" title="Zoom out (-)" aria-label="Zoom out">
+      <svg aria-hidden="true" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="9" r="7"/><path d="M6 9h6"/></svg>
+    </button>
+    <button id="btnZoomReset" title="Reset zoom to 100% (1)" aria-label="Reset zoom to 100%">
+      <span id="zoomLevel">100%</span>
+    </button>
+    <button id="btnZoomIn" title="Zoom in (+)" aria-label="Zoom in">
+      <svg aria-hidden="true" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="9" r="7"/><path d="M9 6v6"/><path d="M6 9h6"/></svg>
+    </button>
+  </div>
+
+  <div class="side-panel" id="adjustPanel" role="region" aria-label="Adjustments">
+    <div class="side-panel-header">
+      <span>Adjust</span>
+      <div class="side-panel-header-actions">
+        <button type="button" id="adjustCompare" class="compare-btn" title="Hold to compare with before">Compare</button>
+        <button type="button" id="adjustReset">Reset</button>
+      </div>
+    </div>
+    <div class="side-panel-body">
+      <div class="slider-row">
+        <label for="brightnessSlider">Brightness <span id="brightnessVal">0</span></label>
+        <input type="range" id="brightnessSlider" min="-100" max="100" value="0">
+      </div>
+      <div class="slider-row">
+        <label for="contrastSlider">Contrast <span id="contrastVal">0</span></label>
+        <input type="range" id="contrastSlider" min="-100" max="100" value="0">
+      </div>
+      <div class="slider-row">
+        <label for="saturationSlider">Saturation <span id="saturationVal">0</span></label>
+        <input type="range" id="saturationSlider" min="-100" max="100" value="0">
+      </div>
+      <div class="panel-actions">
+        <button type="button" id="adjustApply" class="primary">Apply</button>
+        <button type="button" id="adjustCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="side-panel" id="filtersPanel" role="region" aria-label="Filters">
+    <div class="side-panel-header">
+      <span>Filters</span>
+      <div class="side-panel-header-actions">
+        <button type="button" id="filtersCompare" class="compare-btn" title="Hold to compare with before">Compare</button>
+        <button type="button" id="filtersReset">Reset</button>
+      </div>
+    </div>
+    <div class="side-panel-body">
+      <div class="filter-grid">
+        <button type="button" data-filter="grayscale" aria-pressed="false">Grayscale</button>
+        <button type="button" data-filter="sepia" aria-pressed="false">Sepia</button>
+        <button type="button" data-filter="invert" aria-pressed="false">Invert</button>
+        <button type="button" data-filter="blur" aria-pressed="false">Blur</button>
+        <button type="button" data-filter="sharpen" aria-pressed="false">Sharpen</button>
+        <button type="button" data-filter="none" class="active-filter" aria-pressed="true">None</button>
+      </div>
+      <div class="slider-row">
+        <label for="filterIntensity">Strength <span id="filterIntensityVal">100%</span></label>
+        <input type="range" id="filterIntensity" min="0" max="100" value="100">
+      </div>
+      <div class="panel-actions">
+        <button type="button" id="filtersApply" class="primary">Apply</button>
+        <button type="button" id="filtersCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="side-panel" id="resizePanel" role="region" aria-label="Resize">
+    <div class="side-panel-header">
+      <span>Resize</span>
+      <button type="button" id="resizeClose" aria-label="Close resize panel">Close</button>
+    </div>
+    <div class="side-panel-body">
+      <div class="unit-toggle" role="group" aria-label="Resize units">
+        <button type="button" data-unit="px" class="active" aria-pressed="true">Pixels</button>
+        <button type="button" data-unit="%" aria-pressed="false">Percent</button>
+      </div>
+      <div class="resize-fields">
+        <div class="resize-field">
+          <label for="resizeW">Width</label>
+          <input type="number" id="resizeW" min="1" max="16384" step="1">
+        </div>
+        <div class="resize-link">
+          <button type="button" id="lockAspect" class="locked" title="Lock aspect ratio" aria-label="Lock aspect ratio" aria-pressed="true">
+            <svg aria-hidden="true" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 2H4a2 2 0 00-2 2v2"/><path d="M9 2h1a2 2 0 012 2v2"/><path d="M5 12H4a2 2 0 01-2-2V8"/><path d="M9 12h1a2 2 0 002-2V8"/></svg>
+          </button>
+        </div>
+        <div class="resize-field">
+          <label for="resizeH">Height</label>
+          <input type="number" id="resizeH" min="1" max="16384" step="1">
+        </div>
+      </div>
+      <div class="panel-actions">
+        <button type="button" id="resizeApply" class="primary">Apply</button>
+        <button type="button" id="resizeCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="crop-actions" id="cropActions">
+  <div class="crop-presets" role="group" aria-label="Crop aspect ratio">
+    <button type="button" data-ratio="free" class="active" aria-pressed="true">Free</button>
+    <button type="button" data-ratio="orig" aria-pressed="false">Original</button>
+    <button type="button" data-ratio="1:1" aria-pressed="false">1:1</button>
+    <button type="button" data-ratio="4:3" aria-pressed="false">4:3</button>
+    <button type="button" data-ratio="16:9" aria-pressed="false">16:9</button>
+  </div>
+  <button type="button" id="btnCropApply" class="primary">Apply Crop</button>
+  <button type="button" id="btnCropCancel" class="danger">Cancel</button>
+</div>
+
+<div class="export-backdrop" id="exportBackdrop"></div>
+<div class="export-panel" id="exportPanel" role="dialog" aria-modal="true" aria-labelledby="exportTitle">
+  <h3 id="exportTitle">Export Image</h3>
+  <div class="export-field">
+    <label for="exportFileName">File name</label>
+    <input type="text" id="exportFileName" class="text-input" value="image-edited">
+  </div>
+  <div class="format-btns" role="group" aria-label="Export format">
+    <button type="button" data-fmt="png" class="active" aria-pressed="true">PNG</button>
+    <button type="button" data-fmt="jpeg" aria-pressed="false">JPEG</button>
+    <button type="button" data-fmt="webp" aria-pressed="false">WebP</button>
+  </div>
+  <div class="quality-row" id="qualityRow" style="display:none">
+    <label for="qualitySlider">Quality <span id="qualityVal">92%</span></label>
+    <input type="range" id="qualitySlider" min="10" max="100" value="92">
+  </div>
+  <div class="export-bg-row" id="exportBgRow" style="display:none">
+    <label for="exportBgColor">Matte color (transparent pixels)</label>
+    <input type="color" id="exportBgColor" value="#ffffff">
+  </div>
+  <div class="export-meta">
+    <span id="exportDimensions"></span>
+    <span id="exportEstSize"></span>
+  </div>
+  <div class="export-actions">
+    <button type="button" id="exportDownload" class="primary">Download</button>
+    <button type="button" id="exportClose" class="danger">Cancel</button>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="pica.min.js"></script>
+<script src="main.js"></script>
+</body>
+</html>
